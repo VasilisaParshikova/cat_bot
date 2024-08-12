@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import Message, InputMediaPhoto
 from aiogram.types.bot_command import BotCommand
 from aiogram.types import URLInputFile
 from aiogram.types import BufferedInputFile
@@ -24,10 +24,11 @@ dp = Dispatcher()
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
     await message.answer(f"Привет, {message.from_user.full_name}! "
-                         f"Я - бот присылающий фото и gif котиков. Просто нажми /cat для фото или /cat_gif для gif")
+                         f"Я - бот присылающий фото и gif котиков. Просто нажми /cat для фото (/10cat для 10 фото)"
+                         f" или /cat_gif для gif")
 
 
-@dp.message(Command(BotCommand(command='cat', description="My awesome command")))
+@dp.message(Command(BotCommand(command='cat', description="Get one random photo of cat")))
 async def bot_cat(message: Message):
     url: str = 'https://cataas.com/cat'
     async with aiohttp.ClientSession() as session:
@@ -40,20 +41,29 @@ async def bot_cat(message: Message):
             await message.answer_photo(photo=file)
 
 
-@dp.message(Command(BotCommand(command='10cat', description="My awesome command")))
-async def bot_cat(message: Message):
-    url: str = 'https://cataas.com/cat'
-    async with aiohttp.ClientSession() as session:
+@dp.message(Command(BotCommand(command='10cat', description="Get ten random photos of cat")))
+async def bot_cat_10(message: Message):
+    async def get_cat(session, i):
+        url: str = 'https://cataas.com/cat'
         response = await session.get(url)
         if response.status != 200:
-            await message.answer("Что-то пошло не так. Попробуй ещё раз")
+            return False
         else:
             content = await response.read()
-            file = BufferedInputFile(content, filename='image.jpg')
-            await message.answer_photo(photo=file)
+            file = BufferedInputFile(content, filename=f'image{i}.jpg')
+            return file
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [get_cat(session, i) for i in range(10)]
+        res = await asyncio.gather(*tasks)
+        files = []
+        for f in res:
+            if f:
+                files.append(InputMediaPhoto(media=f))
+        await message.answer_media_group(media=files)
 
 
-@dp.message(Command(BotCommand(command='cat_gif', description="My awesome command")))
+@dp.message(Command(BotCommand(command='cat_gif', description="Get one random gif of cat")))
 async def bot_cat_gif(message: Message):
     url: str = 'https://cataas.com/cat/gif'
     async with aiohttp.ClientSession() as session:
@@ -66,10 +76,11 @@ async def bot_cat_gif(message: Message):
             await message.answer_animation(animation=file)
 
 
-@dp.message(Command(BotCommand(command='help', description="My awesome command")))
+@dp.message(Command(BotCommand(command='help', description="Help")))
 async def bot_help(message: Message):
     await message.answer(f"Привет, {message.from_user.full_name}! "
-                         f"Я - бот присылающий фото и gif котиков. Просто нажми /cat для фото или /cat_gif для gif")
+                         f"Я - бот присылающий фото и gif котиков. Просто нажми /cat для фото (/10cat для 10 фото)"
+                         f" или /cat_gif для gif")
 
 
 @dp.message()
