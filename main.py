@@ -120,7 +120,7 @@ async def main() -> None:
                                                                      'мы постараемся устранить её в ближайщее время')
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_message_to_all, 'cron',hour='8,20' , args=())
+    scheduler.add_job(send_message_to_all, 'cron', hour='8,20', args=())
     scheduler.start()
     await dp.start_polling(bot)
 # hour='8,20'
