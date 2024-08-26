@@ -6,18 +6,19 @@ from dotenv import load_dotenv
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from aiogram import Bot, Dispatcher, html
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InputMediaPhoto
 from aiogram.types.bot_command import BotCommand
-from aiogram.types import URLInputFile
-from aiogram.types import BufferedInputFile
 from sqlalchemy import select
 
-from database import engine, session
-from models import Base, Subscriptions
+from database import session
+from models import Subscriptions
+from cat_api_connector import cat_connector
+from helpers import retry_helper
+
 
 load_dotenv()
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -34,31 +35,16 @@ async def command_start_handler(message: Message) -> None:
 
 @dp.message(Command(BotCommand(command='cat', description="Get one random photo of cat")))
 async def bot_cat(message: Message):
-    url: str = 'https://cataas.com/cat'
-    async with aiohttp.ClientSession() as session:
-        response = await session.get(url)
-        if response.status != 200:
-            await message.answer("Что-то пошло не так. Попробуй ещё раз")
-        else:
-            content = await response.read()
-            file = BufferedInputFile(content, filename='image.jpg')
-            await message.answer_photo(photo=file)
+    file = await retry_helper(cat_connector.get_image)
+    if not file:
+        await message.answer("Что-то пошло не так. Попробуй ещё раз")
+    else:
+        await message.answer_photo(photo=file)
 
 
 @dp.message(Command(BotCommand(command='10cat', description="Get ten random photos of cat")))
 async def bot_cat_10(message: Message):
-    async def get_cat(session, i):
-        url: str = 'https://cataas.com/cat'
-        response = await session.get(url)
-        if response.status != 200:
-            return False
-        else:
-            content = await response.read()
-            file = BufferedInputFile(content, filename=f'image{i}.jpg')
-            return file
-
-    async with aiohttp.ClientSession() as session:
-        tasks = [get_cat(session, i) for i in range(10)]
+        tasks = [retry_helper(cat_connector.get_image) for i in range(10)]
         res = await asyncio.gather(*tasks)
         files = []
         for f in res:
@@ -69,18 +55,14 @@ async def bot_cat_10(message: Message):
 
 @dp.message(Command(BotCommand(command='cat_gif', description="Get one random gif of cat")))
 async def bot_cat_gif(message: Message):
-    url: str = 'https://cataas.com/cat/gif'
-    async with aiohttp.ClientSession() as session:
-        response = await session.get(url)
-        if response.status != 200:
-            await message.answer("Что-то пошло не так. Попробуй ещё раз")
-        else:
-            content = await response.read()
-            file = BufferedInputFile(content, filename='image.gif')
-            await message.answer_animation(animation=file)
+    file = await retry_helper(cat_connector.get_gif())
+    if not file:
+        await message.answer("Что-то пошло не так. Попробуй ещё раз")
+    else:
+        await message.answer_animation(animation=file)
 
 
-@dp.message(Command(BotCommand(command='subscribe', description="Subscribe/unsubscribe to random gif/image of cat")))
+@dp.message(Command(BotCommand(command='subscribe', description="Subscribe to random image of cat")))
 async def bot_subscribe(message: Message):
     tg_chat_id = message.chat.id
     subcsribtion = await session.execute(select(Subscriptions).where(Subscriptions.tg_chat_id == tg_chat_id))
@@ -89,6 +71,17 @@ async def bot_subscribe(message: Message):
         new_subcsribtion = Subscriptions(tg_user_id=message.from_user.id, tg_chat_id=message.chat.id)
         session.add(new_subcsribtion)
         await message.answer('Подписка активирована')
+    else:
+        await message.answer('Вы уже подписаны')
+    await session.commit()
+
+@dp.message(Command(BotCommand(command='unsubscribe', description="Unsubscribe from random image of cat")))
+async def bot_subscribe(message: Message):
+    tg_chat_id = message.chat.id
+    subcsribtion = await session.execute(select(Subscriptions).where(Subscriptions.tg_chat_id == tg_chat_id))
+    subcsribtion = subcsribtion.scalars().first()
+    if not subcsribtion:
+        await message.answer('Вы не подписаны')
     else:
         await session.delete(subcsribtion)
         await message.answer('Подписка отменена')
@@ -99,7 +92,9 @@ async def bot_subscribe(message: Message):
 async def bot_help(message: Message):
     await message.answer(f"Привет, {message.from_user.full_name}! "
                          f"Я - бот присылающий фото и gif котиков. Просто нажми /cat для фото (/10cat для 10 фото)"
-                         f" или /cat_gif для gif")
+                         f" или /cat_gif для gif. Также вы можете подписаться на на рассылку картинки котиков "
+                         f"двжды в день по команде /subscribe (отписаться /unsubscribe)")
+
 
 
 @dp.message()
@@ -115,20 +110,21 @@ async def main() -> None:
     async def send_message_to_all():
         subcsriptions = await session.execute(select(Subscriptions))
         subcsriptions = subcsriptions.scalars().all()
-        url: str = 'https://cataas.com/cat'
-        async with aiohttp.ClientSession() as session_api:
-            response = await session_api.get(url)
-            if response.status == 200:
-                content = await response.read()
-                file = BufferedInputFile(content, filename='image.jpg')
-                for user in subcsriptions:
-                    await bot.send_photo(chat_id=user.tg_chat_id, photo=file)
+        file = await cat_connector.get_image()
+        if file:
+            for user in subcsriptions:
+                await bot.send_photo(chat_id=user.tg_chat_id, photo=file)
+        else:
+            for user in subcsriptions:
+                await bot.send_message(chat_id=user.tg_chat_id, text='Проблема с рассылкой, '
+                                                                     'мы постараемся устранить её в ближайщее время')
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_message_to_all, 'cron', hour='8,20', args=())
+    scheduler.add_job(send_message_to_all, 'cron',hour='8,20' , args=())
     scheduler.start()
     await dp.start_polling(bot)
-
+# hour='8,20'
+# minute='*'
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
