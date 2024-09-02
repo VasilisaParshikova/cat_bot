@@ -30,7 +30,7 @@ class CatConnector:
                 return False
             else:
                 content = await response.read()
-                file = BufferedInputFile(content, filename='image.jpg')
+                file = BufferedInputFile(content, filename='image.gif')
                 return file
 
 

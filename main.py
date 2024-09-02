@@ -12,6 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InputMediaPhoto
 from aiogram.types.bot_command import BotCommand
+from aiogram.types.bot_command_scope_default import BotCommandScopeDefault
 from sqlalchemy import select
 
 from database import session
@@ -25,6 +26,18 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
 dp = Dispatcher()
 
+async def set_commands(bot):
+
+    commands = [BotCommand(command='start', description='Start'),
+                BotCommand(command='cat', description="Get one random photo of cat"),
+                BotCommand(command='cat_gif', description="Get one random gif of cat"),
+                BotCommand(command='10cat', description="Get ten random photos of cat"),
+                BotCommand(command='subscribe', description="Subscribe to random image of cat"),
+                BotCommand(command='unsubscribe', description="Unsubscribe from random image of cat"),
+                BotCommand(command='help', description="Help")
+                ]
+
+    await bot.set_my_commands(commands, BotCommandScopeDefault())
 
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
@@ -55,7 +68,7 @@ async def bot_cat_10(message: Message):
 
 @dp.message(Command(BotCommand(command='cat_gif', description="Get one random gif of cat")))
 async def bot_cat_gif(message: Message):
-    file = await retry_helper(cat_connector.get_gif())
+    file = await retry_helper(cat_connector.get_gif)
     if not file:
         await message.answer("Что-то пошло не так. Попробуй ещё раз")
     else:
@@ -106,6 +119,7 @@ async def bot_echo(message: Message):
 
 async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    await set_commands(bot)
 
     async def send_message_to_all():
         subcsriptions = await session.execute(select(Subscriptions))
